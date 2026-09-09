@@ -1,0 +1,1105 @@
+---
+title: "meta"
+output: html_document
+---
+
+# install packages
+
+```{r}
+install.packages("readxl")
+install.packages("metafor")
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(readr)
+library(metafor)
+```
+
+# load dataset
+
+```{r}
+NBA <- read_excel("/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/dat/NBA_noTUEPAC_IPD.xlsx")
+```
+
+```{r}
+NBA_EUR <- NBA %>%
+  filter(ANCESTRY == "EUR")
+```
+
+```{r}
+# process the dataset
+# convert NA into real missing values
+NBA_EUR <- NBA_EUR %>%
+  mutate(across(
+    everything(),
+    ~ {
+      x <- as.character(.x)
+      x <- trimws(x)
+      x[x %in% c("", "NA", "Na", "N/A", "NULL", "null")] <- NA
+      x
+    }
+  ))
+
+NBA_EUR$study <- as.factor(NBA_EUR$study)
+```
+
+```{r}
+NBA_EUR$PRS <- as.numeric(NBA_EUR$PRS)
+NBA_EUR$PC1 <- as.numeric(NBA_EUR$PC1)
+NBA_EUR$PC2 <- as.numeric(NBA_EUR$PC2)
+NBA_EUR$PC3 <- as.numeric(NBA_EUR$PC3)
+NBA_EUR$PC4 <- as.numeric(NBA_EUR$PC4)
+NBA_EUR$PC5 <- as.numeric(NBA_EUR$PC5)
+NBA_EUR$age_of_onset <- as.numeric(NBA_EUR$age_of_onset)
+NBA_EUR$mds_updrs_part_i_summary_score <- as.numeric(NBA_EUR$mds_updrs_part_i_summary_score)
+NBA_EUR$AAV_UPDRSI <- as.numeric(NBA_EUR$AAV_UPDRSI)
+NBA_EUR$mds_updrs_part_ii_summary_score <- as.numeric(NBA_EUR$mds_updrs_part_ii_summary_score)
+NBA_EUR$AAV_UPDRSII <- as.numeric(NBA_EUR$AAV_UPDRSII)
+```
+
+# sample size in each cohort for each variable
+
+```{r}
+df <- NBA_EUR %>%
+  filter(!is.na(age_of_onset))
+
+df <- NBA_EUR %>%
+  filter(!is.na(mds_updrs_part_i_summary_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(mds_updrs_part_ii_summary_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(mds_updrs_part_iii_summary_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(mds_updrs_part_iv_summary_score))
+```
+
+```{r}
+df <- NBA_EUR %>%
+  filter(!is.na(COGNITION))
+
+df <- NBA_EUR %>%
+  filter(!is.na(depress_test_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(gds15_total_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(rbd_summary_score))
+
+df <- NBA_EUR %>%
+  filter(!is.na(ess_total_score))
+```
+
+# SEX regression in each cohort
+
+```{r}
+# create a new column male = 1, female = 2
+NBA_EUR$SEX = factor(NBA_EUR$SEX, levels = c(1, 2), labels = c("male", "female"))
+# linear regression in 28 cohorts separately
+
+study_keep <- c(
+  "APGS", "COPN", "CORIELL", "DENOPA", "DODONA","IDIBAPS","LARGEPD","LUXPARK", "MDGAP-IBB","MDGAP-QSBB", "NZPEGS","PAGE","PDGEN","PDGNRTN","PPMI-G","PPMI-N","PROMO-EPIPARK","PROMO-GENEPARK","PROMO-ROPAD","SP-SEV","STELLENBOS","UPENNU19","VIPD")
+
+NBA_EUR_sex <- NBA_EUR %>%
+  filter(
+    !is.na(SEX),
+    SEX != "",
+    PHENO != "1"
+  )
+
+lm_SEX <- NBA_EUR_sex %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(PRS ~ SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+sex_meta <- lm_SEX %>%
+  filter(term == "SEXfemale") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+sex_meta <- sex_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = sex_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = sex_meta,
+                      method = "REML")
+
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/sex_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/sex_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+sex_meta <- bind_rows(sex_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+sex_meta <- bind_rows(sex_meta, fixed_row)
+
+sex_meta_t <- sex_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(sex_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/sex_meta.csv")
+write.csv(sex_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/sex_meta_t.csv")
+```
+
+## visualization with forest plot
+
+# age at onset regression in each cohort
+
+```{r}
+# linear regression in 28 cohorts separately
+
+study_keep <- c(
+  "APGS", "CORIELL", "DODONA", "PAGE", "PDGNRTN",
+  "PROMO-EPIPARK", "SP-SEV", "VIPD", "COPN", "DENOPA", "IDIBAPS", "MDGAP-QSBB", "NZPEGS", 
+  "PDGEN", "PPMI-N", "PROMO-GENEPARK", "STELLENBOS","UPENNU19"
+)
+
+lm_AAO <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(age_of_onset ~ PRS + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+AAO_meta <- lm_AAO %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+AAO_meta <- AAO_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = AAO_meta,
+                     method = "FE")
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = AAO_meta,
+                      method = "REML")
+
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/aao_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/aao_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+AAO_meta <- bind_rows(AAO_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+AAO_meta <- bind_rows(AAO_meta, fixed_row)
+
+AAO_meta_t <- AAO_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(AAO_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/AAO_meta.csv")
+write.csv(AAO_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/AAO_meta_t.csv")
+```
+
+# UPDRS-I regression in each cohort
+
+```{r}
+study_keep <- c(
+  "PPMI-N", "COPN", "PPMI-G"
+)
+
+lm_UPDRSI <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(mds_updrs_part_i_summary_score ~ PRS + AAV_UPDRSI + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+updrsi_meta <- lm_UPDRSI %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+updrsi_meta <- updrsi_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = updrsi_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = updrsi_meta,
+                      method = "REML")
+
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsi_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsi_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+updrsi_meta <- bind_rows(updrsi_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+updrsi_meta <- bind_rows(updrsi_meta, fixed_row)
+
+updrsi_meta_t <- updrsi_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(updrsi_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsi_meta.csv")
+write.csv(updrsi_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsi_meta_t.csv")
+```
+
+# UPDRSII regression in each cohort
+
+```{r}
+study_keep <- c(
+  "PPMI-N", "COPN", "PPMI-G")
+
+lm_updrsii <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(mds_updrs_part_ii_summary_score ~ PRS + AAV_UPDRSII + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+updrsii_meta <- lm_updrsii %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+updrsii_meta <- updrsii_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = updrsii_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = updrsii_meta,
+                      method = "REML")
+
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsii_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsii_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+updrsii_meta <- bind_rows(updrsii_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+updrsii_meta <- bind_rows(updrsii_meta, fixed_row)
+
+updrsii_meta_t <- updrsii_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(updrsii_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsii_meta.csv")
+write.csv(updrsii_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsii_meta_t.csv")
+```
+
+# updrs-iii regression in each cohort
+
+```{r}
+NBA_EUR$mds_updrs_part_iii_summary_score <- as.numeric(NBA_EUR$mds_updrs_part_iii_summary_score)
+NBA_EUR$AAV_UPDRSIII <- as.numeric(NBA_EUR$AAV_UPDRSIII)
+```
+
+```{r}
+# linear regression in 4 cohorts separately
+
+study_keep <- c(
+  "BIOFIND", "PDGNRTN", "PPMI-N", "COPN", "PPMI-G"
+)
+
+lm_updrsiii <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(mds_updrs_part_iii_summary_score ~ PRS + AAV_UPDRSIII + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+updrsiii_meta <- lm_updrsiii %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+updrsiii_meta <- updrsiii_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = updrsiii_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = updrsiii_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiii_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiii_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+updrsiii_meta <- bind_rows(updrsiii_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+updrsiii_meta <- bind_rows(updrsiii_meta, fixed_row)
+
+updrsiii_meta_t <- updrsiii_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(updrsiii_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiii_meta.csv")
+write.csv(updrsiii_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiii_meta_t.csv")
+```
+
+# UPDRS-IV regression in each cohort
+
+```{r}
+NBA_EUR$mds_updrs_part_iv_summary_score <- as.numeric(NBA_EUR$mds_updrs_part_iv_summary_score)
+NBA_EUR$AAV_UPDRSIV <- as.numeric(NBA_EUR$AAV_UPDRSIV)
+```
+
+```{r}
+# linear regression in 2 cohorts separately
+study_keep <- c(
+  "PPMI-N", "COPN","PPMI-G"
+)
+
+lm_updrsiv <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(mds_updrs_part_iv_summary_score ~ PRS + AAV_UPDRSIV + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+updrsiv_meta <- lm_updrsiv %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+updrsiv_meta <- updrsiv_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = updrsiv_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = updrsiv_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiv_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiv_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+updrsiv_meta <- bind_rows(updrsiv_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+updrsiv_meta <- bind_rows(updrsiv_meta, fixed_row)
+
+updrsiv_meta_t <- updrsiv_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(updrsiv_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiv_meta.csv")
+write.csv(updrsiv_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/updrsiv_meta_t.csv")
+```
+
+# cognition regression in each cohort
+
+```{r}
+NBA_EUR$COGNITION <- as.numeric(NBA_EUR$COGNITION)
+NBA_EUR$AAV_COGNITION <- as.numeric(NBA_EUR$AAV_COGNITION)
+```
+
+```{r}
+
+NBA_EUR <- NBA_EUR %>%
+  mutate(
+    COGNITION = as.numeric(COGNITION)
+  )
+# linear regression in 4 cohorts separately
+
+study_keep <- c(
+  "CORIELL", "PROMO-EPIPARK", "SP-SEV", "COPN", "BIOFIND", "DODONA"
+)
+
+lm_cog <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(glm(COGNITION ~ PRS + AAV_COGNITION + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = ., family = binomial, na.action = na.omit))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+cog_meta <- lm_cog %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+cog_meta <- cog_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = cog_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = cog_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/cog_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/cog_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+cog_meta <- bind_rows(cog_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+cog_meta <- bind_rows(cog_meta, fixed_row)
+
+cog_meta_t <- cog_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(cog_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/cog_meta.csv")
+write.csv(cog_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/cog_meta_t.csv")
+```
+
+# depression regression in each cohort
+
+```{r}
+NBA_EUR$depress_test_score <- as.numeric(NBA_EUR$depress_test_score)
+NBA_EUR$AAV_DEPRESS <- as.numeric(NBA_EUR$AAV_DEPRESS)
+```
+
+```{r}
+# linear regression in 3 cohorts separately
+
+study_keep <- c(
+  "PROMO-EPIPARK", "PROMO-SFB134", "CORIELL"
+)
+
+lm_depress <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(depress_test_score ~ PRS + AAV_DEPRESS + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+depress_meta <- lm_depress %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+depress_meta <- depress_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = depress_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = depress_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/depress_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/depress_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+depress_meta <- bind_rows(depress_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+depress_meta <- bind_rows(depress_meta, fixed_row)
+
+depress_meta_t <- depress_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(depress_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/depress_meta.csv")
+write.csv(depress_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/depress_meta_t.csv")
+
+```
+
+# GDS regression in each cohort
+
+```{r}
+NBA_EUR$gds15_total_score <- as.numeric(NBA_EUR$gds15_total_score)
+NBA_EUR$AAV_GDS <- as.numeric(NBA_EUR$AAV_GDS)
+```
+
+```{r}
+# linear regression in 2 cohorts separately
+
+study_keep <- c(
+  "PPMI-N", "PPMI-G"
+)
+
+lm_gds <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(gds15_total_score ~ PRS + AAV_GDS + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+## meta analysis
+
+```{r}
+gds_meta <- lm_gds %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+gds_meta <- gds_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = gds_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = gds_meta,
+                      method = "REML")
+
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/gds_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/gds_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+gds_meta <- bind_rows(gds_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+gds_meta <- bind_rows(gds_meta, fixed_row)
+
+gds_meta_t <- gds_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(gds_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/gds_meta.csv")
+write.csv(gds_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/gds_meta_t.csv")
+
+```
+
+# RBDSQ regression in each cohort
+
+```{r}
+NBA_EUR$rbd_summary_score <- as.numeric(NBA_EUR$rbd_summary_score)
+NBA_EUR$AAV_RBD <- as.numeric(NBA_EUR$AAV_RBD)
+```
+
+```{r}
+# linear regression in 2 cohorts separately
+
+study_keep <- c(
+  "PPMI-N", "PPMI-G"
+)
+
+lm_rbd <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(rbd_summary_score ~ PRS + AAV_RBD + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+```
+
+# meta analysis
+
+```{r}
+rbd_meta <- lm_rbd %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+rbd_meta <- rbd_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = rbd_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = rbd_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/rbd_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/rbd_random.txt")
+
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+rbd_meta <- bind_rows(rbd_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+rbd_meta <- bind_rows(rbd_meta, fixed_row)
+
+rbd_meta_t <- rbd_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(rbd_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/rbd_meta.csv")
+write.csv(rbd_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/rbd_meta_t.csv")
+```
+
+# ESS regression in each cohort
+
+```{r}
+NBA_EUR$ess_total_score <- as.numeric(NBA_EUR$ess_total_score)
+NBA_EUR$AAV_ESS <- as.numeric(NBA_EUR$AAV_ESS)
+```
+
+```{r}
+# linear regression in 4 cohorts separately
+
+study_keep <- c(
+  "PPMI-N", "PROMO-EPIPARK", "PROMO-SFB134", "PPMI-G"
+)
+
+lm_ess <- NBA_EUR %>%
+  filter(study %in% study_keep) %>%
+  group_by(study) %>%
+  do(tidy(lm(ess_total_score ~ PRS + AAV_ESS + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) %>%
+  ungroup()
+
+```
+
+## meta analysis
+
+```{r}
+ess_meta <- lm_ess %>%
+  filter(term == "PRS") %>%
+  select(study, estimate, std.error, p.value)
+
+# add 95%CI column
+ess_meta <- ess_meta %>%
+  mutate(
+    ci.lb = estimate - 1.96 * std.error,
+    ci.ub = estimate + 1.96 * std.error
+  )
+
+# Fixed-effect model
+fixed <- rma.uni(yi = estimate,
+                     sei = std.error,
+                     data = ess_meta,
+                     method = "FE")
+
+# Random-effects model
+random <- rma.uni(yi = estimate,
+                      sei = std.error,
+                      data = ess_meta,
+                      method = "REML")
+					  
+writeLines(capture.output(summary(fixed)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/ess_fixed.txt")
+writeLines(capture.output(summary(random)),
+           "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/ess_random.txt")
+```
+
+```{r}
+random_row <- tibble(
+  study = "Random-effects Model",
+  estimate = as.numeric(random$b),
+  std.error = random$se,
+  p.value = random$pval,
+  ci.lb = random$ci.lb,
+  ci.ub = random$ci.ub
+)
+ess_meta <- bind_rows(ess_meta, random_row)
+
+fixed_row <- tibble(
+  study = "Fixed-effects Model",
+  estimate = as.numeric(fixed$b),
+  std.error = fixed$se,
+  p.value = fixed$pval,
+  ci.lb = fixed$ci.lb,
+  ci.ub = fixed$ci.ub
+)
+ess_meta <- bind_rows(ess_meta, fixed_row)
+
+ess_meta_t <- ess_meta %>%
+  select(study, estimate, ci.lb, ci.ub, p.value) %>%
+  column_to_rownames("study") %>%
+  t() %>%
+  as.data.frame()
+
+write.csv(ess_meta, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/ess_meta.csv")
+write.csv(ess_meta_t, "/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/results/ess_meta_t.csv")
+```
+
+# supplenmentary table
+
+```{r}
+demo <- read_excel("/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/dat/demographics_tables2.xlsx")
+```
+
+```{r}
+demo <- demo %>%
+  mutate(age_of_onset = as.numeric(age_of_onset))
+```
+
+## sex
+
+```{r}
+# distribution
+demo %>%
+  mutate(
+    PHENO_group = case_when(
+      PHENO == 1 ~ "control",
+      PHENO == 2 ~ "case"
+    )
+  ) %>%
+  group_by(ANCESTRY, PHENO_group) %>%
+  summarise(
+    total_nonmissing_sex = sum(!is.na(SEX)),
+    male_n = sum(SEX == 1, na.rm = TRUE),
+    percent_male = 100 * male_n / total_nonmissing_sex,
+    .groups = "drop"
+  )
+```
+
+## age at genotype
+
+```{r}
+demo %>%
+  group_by(ANCESTRY, PHENO) %>%
+  summarise(
+    n = n(),
+    mean_AGE = mean(AGE, na.rm = TRUE),
+    sd_AGE = sd(AGE, na.rm = TRUE)
+  ) %>%
+  arrange(ANCESTRY, PHENO)
+```
+
+## age at onset
+
+```{r}
+demo %>%
+  filter(!is.na(age_of_onset)) %>%
+  group_by(ANCESTRY, PHENO) %>%
+  summarise(
+    n = n(),
+    mean_AAO = mean(age_of_onset, na.rm = TRUE),
+    sd_AAO = sd(age_of_onset, na.rm = TRUE)
+  ) %>%
+  arrange(ANCESTRY, PHENO)
+```
+
+# normal distribution
+
+```{r}
+df <- read_csv("/home/rstudio/workspace/ws_files/r11/cor_r11/NBA/dat/risk_results_r11.csv")
+```
+
+```{r}
+# Keep only cases: PHENO = 2
+df_case <- df %>%
+  mutate(
+    PRS = as.numeric(PRS),
+    PHENO = as.numeric(PHENO),
+    ANCESTRY = as.factor(ANCESTRY)
+  ) %>%
+  filter(PHENO == 2, !is.na(PRS), !is.na(ANCESTRY))
+
+# Check sample size by ancestry
+df_case %>%
+  count(ANCESTRY)
+```
+
+```{r}
+ggplot(df_case, aes(sample = PRS)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~ ANCESTRY, scales = "free") +
+  theme_bw() +
+  labs(
+    title = "QQ plot of PRS by ancestry among cases only",
+    x = "Theoretical quantiles",
+    y = "Sample quantiles"
+  )
+```

@@ -1,0 +1,302 @@
+---
+title: "TUEPAC_cor_0219"
+output: html_document
+---
+
+# sex, age at visit as covariates
+
+# install packages
+
+```{r}
+install.packages("readxl")
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(broom)
+```
+
+# read csv file
+
+```{r}
+tuepac <- read_excel("/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/dat/TUEPAC_key_PD.xlsx")
+```
+
+# process the dataset
+
+```{r}
+# convert NA into real missing values
+tuepac <- tuepac %>%
+  mutate(across(
+    everything(),
+    ~ {
+      x <- as.character(.x)
+      x <- trimws(x)
+      x[x %in% c("", "NA", "Na", "N/A", "NULL", "null")] <- NA
+      x
+    }
+  ))
+```
+```{r}
+# keep numeric columns
+tuepac <- tuepac %>%
+  mutate(across(
+    everything(),
+    ~ {
+      x <- as.character(.x)
+      x <- trimws(x)
+      x[x %in% c("", "NA", "Na", "N/A", "NULL", "null")] <- NA
+      x
+    }
+  )) %>%
+  type_convert()
+```
+
+
+# sex
+
+```{r}
+# create a new column male = 1, female = 2
+data$SEX = factor(data$SEX, levels = c(1, 2), labels = c("male", "female"))
+```
+```{r}
+# linear regression
+# Within each ancestry group, is there a significant difference in Lyso-PRS between males and females, after adjusting for ancestry-related principal components?
+lm_SEX <- data %>%
+  do(tidy(lm(PRS ~ SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .))) 
+# save lm_SEX as csv
+write.csv(lm_SEX, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_SEX.csv")
+```
+
+# AAO
+
+```{r}
+data <- data %>%
+  mutate(
+    AAO = as.character(AAO),
+    AAO = na_if(AAO, "NA"),
+    AAO = na_if(AAO, ""),
+    AAO = as.numeric(AAO)
+  )
+```
+```{r}
+# Remove rows with missing AAO
+df_aao <- data %>% filter(!is.na(AAO))
+```
+```{r}
+ggplot(df_aao, aes(sample = AAO)) +
+  stat_qq() +
+  stat_qq_line() +
+  theme_minimal() +
+  labs(title = "QQ plot of Age at Onset in TUEPAC")
+# AAO normal distribution
+```
+```{r}
+lm_aao <- df_aao %>%
+  do(tidy(lm(AAO ~ PRS + SEX + PC1 + PC2 + PC3 + PC4 + PC5, data = .)))
+write.csv(lm_aao, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_AAO.csv")
+```
+
+# UPDRS
+
+```{r}
+data <- data %>%
+  mutate(UPDRS_I = as.numeric(UPDRS_I))
+
+# Remove rows with missing updrs_i
+df_updrsi <- data %>% filter(!is.na(UPDRS_I))
+```
+```{r}
+# regression analysis
+df_updrsi <- df_updrsi %>%
+  mutate(aav_UPDRSI = as.numeric(aav_UPDRSI))
+
+lm_updrsi <- df_updrsi %>%
+  { 
+    lm(UPDRS_I ~ PRS + aav_UPDRSI + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+       data = .) |> 
+      broom::tidy()
+  }
+write.csv(lm_updrsi, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_updrsi.csv")
+```
+
+```{r}
+data <- data %>%
+  mutate(UPDRS_II = as.numeric(UPDRS_II))
+
+# Remove rows with missing updrs_i
+df_updrsii <- data %>% filter(!is.na(UPDRS_II))
+```
+```{r}
+# regression analysis
+df_updrsii <- df_updrsii %>%
+  mutate(aav_UPDRSII = as.numeric(aav_UPDRSII))
+
+lm_updrsii <- df_updrsii %>%
+  { 
+    lm(UPDRS_II ~ PRS + aav_UPDRSII + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+       data = .) |> 
+      broom::tidy()
+  }
+write.csv(lm_updrsii, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_updrsii.csv")
+```
+
+```{r}
+data <- data %>%
+  mutate(UPDRS_III = as.numeric(UPDRS_III))
+
+# Remove rows with missing updrs_i
+df_updrsiii <- data %>% filter(!is.na(UPDRS_III))
+```
+```{r}
+# regression analysis
+df_updrsiii <- df_updrsiii %>%
+  mutate(aav_UPDRSIII = as.numeric(aav_UPDRSIII))
+
+lm_updrsiii <- df_updrsiii %>%
+  { 
+    lm(UPDRS_III ~ PRS + aav_UPDRSIII + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+       data = .) |> 
+      broom::tidy()
+  }
+write.csv(lm_updrsiii, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_updrsiii.csv")
+```
+
+
+```{r}
+data <- data %>%
+  mutate(UPDRS_IV = as.numeric(UPDRS_IV))
+
+# Remove rows with missing updrs_i
+df_updrsiv <- data %>% filter(!is.na(UPDRS_IV))
+```
+```{r}
+# regression analysis
+df_updrsiv <- df_updrsiv %>%
+  mutate(aav_UPDRSIV = as.numeric(aav_UPDRSIV))
+
+lm_updrsiv <- df_updrsiv %>%
+  { 
+    lm(UPDRS_IV ~ PRS + aav_UPDRSIV + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+       data = .) |> 
+      broom::tidy()
+  }
+write.csv(lm_updrsiv, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_updrsiv.csv")
+```
+
+### spearmann/person correlation
+
+```{r}
+# Remove rows with missing updrs_i
+updrsiv <- tuepac %>% filter(!is.na(UPDRS_IV))
+```
+
+```{r}
+ggplot(updrsi, aes(sample = UPDRS_I)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Q–Q plot of UPDRS-I")
+```
+
+```{r}
+cor.test(
+  updrsiv$UPDRS_IV,
+  updrsiv$PRS,
+  method = "spearman",
+  exact = FALSE
+)
+```
+
+## mutiple test correction across ancestries
+```{r}
+# Your p-values (from the figure)
+p <- c(0.23, 0.47, 0.45, 0.045)
+
+# BH (Benjamini–Hochberg) adjusted p-values
+p.adjust(p, method = "BH")
+```
+
+# COGNITION
+```{r}
+data <- data %>%
+  mutate(
+    cognition_impairment = as.numeric(cognition_impairment)
+  )
+
+# Remove rows with missing cog
+df_cog <- data %>% filter(!is.na(cognition_impairment))
+
+df_cog <- df_cog %>%
+  mutate(aav_cognition = as.numeric(aav_cognition))
+
+lm_cog <- df_cog %>%
+  do(tidy(glm(cognition_impairment ~ PRS + aav_cognition + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+              data = ., family = binomial)))  
+```
+```{r}
+write.csv(lm_cog, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_cog.csv")
+```
+
+# depress
+
+```{r}
+data <- data %>%
+  mutate(
+    aav_BDI = as.numeric(aav_BDI),
+    `BDI-II` = as.numeric(`BDI-II`)
+  )
+
+# Remove rows with missing depress
+df_BDI <- data %>% filter(!is.na(`BDI-II`))
+
+lm_depress <- df_BDI %>%
+  { 
+    lm(`BDI-II` ~ PRS + aav_BDI + SEX + PC1 + PC2 + PC3 + PC4 + PC5,
+       data = .) |> 
+      broom::tidy()
+  }
+write.csv(lm_depress, "/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/results/lm_depress.csv")
+```
+
+
+# supplementary table 1
+
+```{r}
+demo_tuepac <- read_excel("/home/rstudio/workspace/ws_files/r11/cor_r11/TUEPAC/dat/TUEPAC_key.xlsx")
+```
+
+## sex
+
+```{r}
+demo_tuepac %>%
+  count(PHENO, SEX) %>%
+  arrange(PHENO, SEX)
+```
+```{r}
+table(demo_tuepac$PHENO, demo_tuepac$SEX)
+chisq.test(table(demo_tuepac$PHENO, demo_tuepac$SEX))
+```
+
+## AGE
+
+```{r}
+demo_tuepac %>%
+  group_by(PHENO) %>%
+  summarise(
+    n = n(),
+    mean_AGE = mean(AGE, na.rm = TRUE),
+    sd_AGE = sd(AGE, na.rm = TRUE)
+  )
+```
+
+## age of onset
+
+```{r}
+tuepac %>%
+  filter(!is.na(AAO)) %>%
+  summarise(
+    n = n(),
+    mean_AAO = mean(AAO, na.rm = TRUE),
+    sd_AAO = sd(AAO, na.rm = TRUE)
+  )
+```
+
